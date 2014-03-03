@@ -1,13 +1,14 @@
 <?xml version="1.0"?>
-<RDF xmlns="http://www.w3.org/1999/02/22-rdf-syntax-ns#" 
+<RDF xmlns="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
      xmlns:em="http://www.mozilla.org/2004/em-rdf#">
 
   <Description about="urn:mozilla:install-manifest">
 
     <em:bootstrap>true</em:bootstrap>
+    <em:type>2</em:type>
     <em:id>pinned-window@mhammond.github.com</em:id>
     <em:name>Pinned Window extension for Firefox</em:name>
-    <em:version>1.0</em:version>
+    <em:version>1.0.1</em:version>
     <em:description>Allows a window to be 'pinned' so new links will not be opened in that window.</em:description>
     <em:creator>Mark Hammond</em:creator>
     <!-- optional items -->
