@@ -179,7 +179,11 @@ function shutdown(aData, aReason) {
   let windows = wm.getEnumerator("navigator:browser");
   while (windows.hasMoreElements()) {
     let domWindow = windows.getNext().QueryInterface(Ci.nsIDOMWindow);
-    unloadFromWindow(domWindow);
+    try {
+      unloadFromWindow(domWindow);
+    } catch (ex) {
+      log("Failed to reset window: " + ex + "\n" + ex.stack);
+    }
   }
 }
 
