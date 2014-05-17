@@ -9,6 +9,8 @@ function log(what) {
   dump(" *** pinnedwindow: " + what + "\n");
 }
 
+// Return a window suitable for "delegating" operations to (eg, the window
+// in which the tab is actually going to be opened in)
 function getNonPinnedWindow() {
   let enumerator = Services.wm.getEnumerator("navigator:browser");
   while (enumerator.hasMoreElements()) {
@@ -19,6 +21,9 @@ function getNonPinnedWindow() {
   }
 }
 
+// Monkey-patch various browser implementation functions.
+// NOTE: The 'window' variables referenced here are the global window into
+// which these functions are injected.
 let patched_openURI = function (aURI, aOpener, aWhere, aContext) {
   switch (aWhere) {
     case Ci.nsIBrowserDOMWindow.OPEN_NEWWINDOW :
@@ -44,6 +49,7 @@ let patched_openLinkIn = function openLinkIn(url, where, params) {
   window.__pinned_window_monkey.openLinkIn(url, where, params);
 };
 
+// Install the monkey-patches into a window.
 function installPatchesIntoWindow(chromeWindow) {
   let save = chromeWindow.__pinned_window_monkey = {};
   save['openURI'] = chromeWindow.nsBrowserAccess.prototype.openURI;
@@ -61,7 +67,8 @@ function uninstallPatchesFromWindow(chromeWindow) {
   chromeWindow.nsBrowserAccess.prototype.openURI = saved['openURI'];
   chromeWindow.openLinkIn = saved['openLinkIn'];
   delete chromeWindow.__pinned_window_monkey;
-  SessionStore.setWindowValue(chromeWindow, SS_KEY_PINNED, false);
+  // remove state from the session store.
+  SessionStore.deleteWindowValue(chromeWindow, SS_KEY_PINNED);
 }
 
 function setPinned(menuItem, chromeWindow) {
@@ -70,22 +77,25 @@ function setPinned(menuItem, chromeWindow) {
   menuItem.setAttribute("label", "Unpin Window");
 
   // and store the state in the session store.
-  SessionStore.setWindowValue(chromeWindow, SS_KEY_PINNED, true);
+  SessionStore.setWindowValue(chromeWindow, SS_KEY_PINNED, "true");
 }
 
 function setUnpinned(menuItem, chromeWindow) {
   log("setting window as unpinned");
   uninstallPatchesFromWindow(chromeWindow);
   menuItem.setAttribute("label", "Pin Window");
-
-  // and store the state in the session store.
-  SessionStore.setWindowValue(chromeWindow, SS_KEY_PINNED, false);
 }
 
+// Utilities to initialize the addon...
 function loadIntoWindow(window) {
   if (!window)
     return;
-  // Add any persistent UI elements
+  let wintype = window.document.documentElement.getAttribute('windowtype');
+  if (wintype != "navigator:browser") {
+    log("not installing pinned-window extension into window of type " + wintype);
+    return;
+  }
+  // Add persistent UI elements to the "Tools" ment.
   let menuItem = window.document.createElement("menuitem");
   menuItem.setAttribute("id", "pinnedwindow-menuitem");
   menuItem.addEventListener("command", function() {
@@ -97,7 +107,11 @@ function loadIntoWindow(window) {
       setPinned(this, thisWin);
     }
   }, true);
-  let menu = window.document.getElementById("contentAreaContextMenu");
+  let menu = window.document.getElementById("menu_ToolsPopup");
+  if (!menu) {
+    // might be a popup or similar.
+    log("not installing pinned-window extension into browser window as there is no Tools menu");
+  }
   menu.appendChild(menuItem);
 
   SessionStore.promiseInitialized.then(

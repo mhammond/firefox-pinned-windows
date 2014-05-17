@@ -10,10 +10,12 @@ with each window dedicated to a particular site or task.
 Note that you can still drag and drop tabs to and from pinned windows - this
 only affects new tabs that would be opened by clicking on a link.
 
-This extension adds a new context menu item - "Pin Window" or "Unpin Window" -
-which toggles the pinned state for that window.  The pinned state is stored
-with SessionRestore, so the pinned or unpinned state of windows remains across
-browser restarts.
+This extension adds a new item to the Tools menu - "Pin Window" or
+"Unpin Window" - which toggles the pinned state for that window.  The pinned
+state is stored with SessionRestore, so the pinned or unpinned state of
+windows remains across browser restarts.
+
+Note that on Windows, you can access the Tools menu with Alt+T.
 
 ## Use-cases
 
@@ -40,3 +42,13 @@ open.
 
 If you pin this music window, the link you follow from your mail client will
 open in a different browser window instead of in the music window.
+
+# Development
+
+The easiest way to develop/debug this is:
+
+* In your profile directory's "extensions" subdir, create a file named
+  pinned-window@mhammond.github.com.xpi
+* Add a line to this file with the full path to the addon source dir.  Be sure
+  to include the trailing slash (or backslash if on Windows)
+* Start Firefox
