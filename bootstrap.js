@@ -5,6 +5,10 @@ Cu.import("resource:///modules/sessionstore/SessionStore.jsm");
 
 const SS_KEY_PINNED = "pinnedwindow:pinned";
 
+// A weak map with the key being a window and the value being an object
+// with the functions we overrode for that window.
+let windowOverrides = new WeakMap();
+
 function log(what) {
   dump(" *** pinnedwindow: " + what + "\n");
 }
@@ -15,7 +19,7 @@ function getNonPinnedWindow() {
   let enumerator = Services.wm.getEnumerator("navigator:browser");
   while (enumerator.hasMoreElements()) {
     let win = enumerator.getNext();
-    if (!win.__pinned_window_monkey) {
+    if (!windowOverrides.has(win)) {
       return win;
     }
   }
@@ -24,21 +28,21 @@ function getNonPinnedWindow() {
 // Monkey-patch various browser implementation functions.
 // NOTE: The 'window' variables referenced here are the global window into
 // which these functions are injected.
-let patched_openURI = function (aURI, aOpener, aWhere, aContext) {
+let patched_openURI = function (window, aURI, aOpener, aWhere, aContext) {
   switch (aWhere) {
-    case Ci.nsIBrowserDOMWindow.OPEN_NEWWINDOW :
-      return chromeWindow._origOpenURI(aURI, aOpener, aWhere, aContext);
+    case Ci.nsIBrowserDOMWindow.OPEN_NEWWINDOW:
+      return windowOverrides.get(window).openURI(aURI, aOpener, aWhere, aContext);
     default :
       let newWin = getNonPinnedWindow();
       if (newWin) {
         newWin.focus();
         return newWin.nsBrowserAccess.prototype.openURI(aURI, aOpener, aWhere, aContext);
       }
-      return window.__pinned_window_monkey.openURI(aURI, aOpener, aWhere, aContext);
+      return windowOverrides.get(window).openURI(aURI, aOpener, aWhere, aContext);
     }
 };
 
-let patched_openLinkIn = function openLinkIn(url, where, params) {
+let patched_openLinkIn = function openLinkIn(window, url, where, params) {
   if (where == "current" || where == "tab") {
     let win = getNonPinnedWindow();
     if (win) {
@@ -46,27 +50,28 @@ let patched_openLinkIn = function openLinkIn(url, where, params) {
       return win.openLinkIn(url, where, params);
     }
   }
-  window.__pinned_window_monkey.openLinkIn(url, where, params);
+  windowOverrides.get(window).openLinkIn(url, where, params);
 };
 
 // Install the monkey-patches into a window.
 function installPatchesIntoWindow(chromeWindow) {
-  let save = chromeWindow.__pinned_window_monkey = {};
+  let save = {};
   save['openURI'] = chromeWindow.nsBrowserAccess.prototype.openURI;
-  chromeWindow.nsBrowserAccess.prototype.openURI = patched_openURI;
+  chromeWindow.nsBrowserAccess.prototype.openURI = patched_openURI.bind(this, chromeWindow);
 
   save['openLinkIn'] = chromeWindow.openLinkIn;
-  chromeWindow.openLinkIn = patched_openLinkIn;
+  chromeWindow.openLinkIn = patched_openLinkIn.bind(this, chromeWindow);
+  windowOverrides.set(chromeWindow, save);
 }
 
 function uninstallPatchesFromWindow(chromeWindow) {
-  let saved = chromeWindow.__pinned_window_monkey;
+  let saved = windowOverrides.get(chromeWindow)
   if (!saved) {
     return;
   }
   chromeWindow.nsBrowserAccess.prototype.openURI = saved['openURI'];
   chromeWindow.openLinkIn = saved['openLinkIn'];
-  delete chromeWindow.__pinned_window_monkey;
+  windowOverrides.delete(chromeWindow);
   // remove state from the session store.
   SessionStore.deleteWindowValue(chromeWindow, SS_KEY_PINNED);
 }
@@ -100,7 +105,7 @@ function loadIntoWindow(window) {
   menuItem.setAttribute("id", "pinnedwindow-menuitem");
   menuItem.addEventListener("command", function() {
     let thisWin = this.ownerDocument.defaultView;
-    if (thisWin.__pinned_window_monkey) {
+    if (windowOverrides.get(thisWin)) {
       // already configured, so unconfigure.
       setUnpinned(this, thisWin);
     } else {
