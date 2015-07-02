@@ -1,6 +1,6 @@
 # Pinned Windows extension for Firefox
 
-This extension imlements a concept similar to Pinned Tabs, but for Firefox
+This extension implements a concept similar to Pinned Tabs, but for Firefox
 windows.  Once a window is pinned, all new tabs that would have previously
 been opened in that window are now opened in a different, non-pinned window.
 
@@ -48,7 +48,7 @@ open in a different browser window instead of in the music window.
 The easiest way to develop/debug this is:
 
 * In your profile directory's "extensions" subdir, create a file named
-  pinned-window@mhammond.github.com.xpi
+  pinned-window@mhammond.github.com
 * Add a line to this file with the full path to the addon source dir.  Be sure
   to include the trailing slash (or backslash if on Windows)
 * Start Firefox
