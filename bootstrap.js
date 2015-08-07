@@ -5,12 +5,21 @@ Cu.import("resource:///modules/sessionstore/SessionStore.jsm");
 
 const SS_KEY_PINNED = "pinnedwindow:pinned";
 
+const PREF_VERBOSE = "extensions.pinnedwindow.verbose";
+let verbose = false;
+
 // A weak map with the key being a window and the value being an object
 // with the functions we overrode for that window.
 let windowOverrides = new WeakMap();
 
 function log(what) {
-  dump(" *** pinnedwindow: " + what + "\n");
+  console.log(" *** pinnedwindow: ", what);
+}
+
+function debug(what) {
+  if (verbose) {
+    console.log(" ***** pinnedwindow: ", what);
+  }
 }
 
 // Return a window suitable for "delegating" operations to (eg, the window
@@ -29,6 +38,7 @@ function getNonPinnedWindow() {
 // NOTE: The 'window' variables referenced here are the global window into
 // which these functions are injected.
 let patched_openURI = function (window, aURI, aOpener, aWhere, aContext) {
+  debug("openURI " + (aURI ? aURI.spec : "<null>") + " in " + aWhere);
   switch (aWhere) {
     case Ci.nsIBrowserDOMWindow.OPEN_NEWWINDOW:
       return windowOverrides.get(window).openURI(aURI, aOpener, aWhere, aContext);
@@ -36,20 +46,39 @@ let patched_openURI = function (window, aURI, aOpener, aWhere, aContext) {
       let newWin = getNonPinnedWindow();
       if (newWin) {
         newWin.focus();
+        debug("openURI found non-pinned window");
         return newWin.nsBrowserAccess.prototype.openURI(aURI, aOpener, aWhere, aContext);
       }
       return windowOverrides.get(window).openURI(aURI, aOpener, aWhere, aContext);
     }
 };
 
+let patched_openURIInFrame = function(window, uri, params, where, context) {
+  debug("openURIInFrame " + (uri ? uri.spec : "<null>") + " in " + where);
+  let win = getNonPinnedWindow();
+  if (win) {
+    win.focus();
+    debug("openURIInFrame found non-pinned window");
+    return win.nsBrowserAccess.prototype.openURIInFrame(uri, params, where, context);
+  }
+  debug("openURIInFrame can't find a non-pinned window so opening in original window");
+  return windowOverrides.get(window).openURIInFrame(uri, params, where, context);
+}
+
 let patched_openLinkIn = function openLinkIn(window, url, where, params) {
-  if (where == "current" || where == "tab") {
+  debug("openLinkIn " + url + " in " + where);// + " with " + JSON.stringify(params));
+  // params.allowPinnedTabHostChange is a param sent when the user enters a
+  // URL into the awesomebar, so we allow that to go to the current window.
+  let useSameWindow = params && params.allowPinnedTabHostChange;
+  if (!useSameWindow && (where == "current" || where == "tab")) {
     let win = getNonPinnedWindow();
     if (win) {
       win.focus();
+      debug("openLinkIn found non-pinned window");
       return win.openLinkIn(url, where, params);
     }
   }
+  debug("openLinkIn can't find a non-pinned window so opening in original window");
   windowOverrides.get(window).openLinkIn(url, where, params);
 };
 
@@ -59,8 +88,12 @@ function installPatchesIntoWindow(chromeWindow) {
   save['openURI'] = chromeWindow.nsBrowserAccess.prototype.openURI;
   chromeWindow.nsBrowserAccess.prototype.openURI = patched_openURI.bind(this, chromeWindow);
 
+  save['openURIInFrame'] = chromeWindow.nsBrowserAccess.prototype.openURIInFrame;
+  chromeWindow.nsBrowserAccess.prototype.openURIInFrame = patched_openURIInFrame.bind(this, chromeWindow);
+
   save['openLinkIn'] = chromeWindow.openLinkIn;
   chromeWindow.openLinkIn = patched_openLinkIn.bind(this, chromeWindow);
+
   windowOverrides.set(chromeWindow, save);
 }
 
@@ -70,6 +103,7 @@ function uninstallPatchesFromWindow(chromeWindow) {
     return;
   }
   chromeWindow.nsBrowserAccess.prototype.openURI = saved['openURI'];
+  chromeWindow.nsBrowserAccess.prototype.openURIInFrame = saved['openURIInFrame'];
   chromeWindow.openLinkIn = saved['openLinkIn'];
   windowOverrides.delete(chromeWindow);
   // remove state from the session store.
@@ -118,6 +152,7 @@ function loadIntoWindow(window) {
     log("not installing pinned-window extension into browser window as there is no Tools menu");
   }
   menu.appendChild(menuItem);
+  debug("installing pinnedwindow into new window");
 
   SessionStore.promiseInitialized.then(
     () => {
@@ -154,10 +189,25 @@ let windowListener = {
   onWindowTitleChange: function(aWindow, aTitle) {}
 };
 
+function prefObserver(subject, topic, data) {
+  switch (data) {
+    case PREF_VERBOSE:
+      try {
+        verbose = Services.prefs.getBoolPref(PREF_VERBOSE);
+      } catch (ex) {}
+      break;
+  }
+}
+
 /*
  * Extension entry points
  */
 function startup(aData, aReason) {
+  // Watch for prefs we care about.
+  Services.prefs.addObserver(PREF_VERBOSE, prefObserver, false);
+  // And ensure initial values are picked up.
+  prefObserver(null, "", PREF_VERBOSE);
+
   // Load into any existing windows
   let windows = Services.wm.getEnumerator("navigator:browser");
   while (windows.hasMoreElements()) {
@@ -190,6 +240,7 @@ function shutdown(aData, aReason) {
       log("Failed to reset window: " + ex + "\n" + ex.stack);
     }
   }
+  Services.prefs.removeObserver(PREF_VERBOSE, prefObserver);
 }
 
 function install(aData, aReason) {}
