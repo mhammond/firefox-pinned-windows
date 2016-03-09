@@ -34,6 +34,25 @@ function getNonPinnedWindow() {
   }
 }
 
+// Open a new window with the specified url. Used when no non-pinned windows
+// can be found.
+function openNewBrowserWindow(url) {
+  // Set up window.arguments.
+  let sa = Cc["@mozilla.org/supports-array;1"].createInstance(Ci.nsISupportsArray);
+  let wuri = null;
+  if (url) {
+    wuri = Cc["@mozilla.org/supports-string;1"].createInstance(Ci.nsISupportsString);
+    wuri.data = url;
+  }
+  sa.AppendElement(wuri);
+  // These 2 args apparently need to be specified, even if they are null.
+  sa.AppendElement(null); // charset
+  sa.AppendElement(null); // referrer
+  let features = "chrome,dialog=no,all";
+  let newWindow = Services.ww.openWindow(null, "chrome://browser/content/browser.xul", null, features, sa);
+  newWindow.focus();
+}
+
 // Monkey-patch various browser implementation functions.
 // NOTE: The 'window' variables referenced here are the global window into
 // which these functions are injected.
@@ -49,7 +68,9 @@ let patched_openURI = function (window, aURI, aOpener, aWhere, aContext) {
         debug("openURI found non-pinned window");
         return newWin.nsBrowserAccess.prototype.openURI(aURI, aOpener, aWhere, aContext);
       }
-      return windowOverrides.get(window).openURI(aURI, aOpener, aWhere, aContext);
+      debug("openURI can't find a non-pinned window so creating a new window");
+      openNewBrowserWindow(aURI.spec);
+      return null;
     }
 };
 
@@ -61,6 +82,10 @@ let patched_openURIInFrame = function(window, uri, params, where, context) {
     debug("openURIInFrame found non-pinned window");
     return win.nsBrowserAccess.prototype.openURIInFrame(uri, params, where, context);
   }
+  // This is very tricky to support the semantics of openURIInFrame into a new
+  // window (ie, we need to wait for it to load before we can delegate it to
+  // the new window, but we need the result synchronously here.)
+  // So just open in this window.
   debug("openURIInFrame can't find a non-pinned window so opening in original window");
   return windowOverrides.get(window).openURIInFrame(uri, params, where, context);
 }
@@ -78,8 +103,8 @@ let patched_openLinkIn = function openLinkIn(window, url, where, params) {
       return win.openLinkIn(url, where, params);
     }
   }
-  debug("openLinkIn can't find a non-pinned window so opening in original window");
-  windowOverrides.get(window).openLinkIn(url, where, params);
+  debug("openLinkIn can't find a non-pinned window so opening in new window");
+  openNewBrowserWindow(url);
 };
 
 // Install the monkey-patches into a window.

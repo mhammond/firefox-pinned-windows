@@ -52,3 +52,6 @@ The easiest way to develop/debug this is:
 * Add a line to this file with the full path to the addon source dir.  Be sure
   to include the trailing slash (or backslash if on Windows)
 * Start Firefox
+* To see verbose debug messages, create a boolean preference
+  "extensions.pinnedwindow.verbose" to true - message will be
+  sent to the browser console.
