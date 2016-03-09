@@ -8,7 +8,7 @@
     <em:type>2</em:type>
     <em:id>pinned-window@mhammond.github.com</em:id>
     <em:name>Pinned Window extension for Firefox</em:name>
-    <em:version>1.0.3</em:version>
+    <em:version>1.0.4</em:version>
     <em:description>Allows a window to be 'pinned' so new links will not be opened in that window.</em:description>
     <em:creator>Mark Hammond</em:creator>
     <!-- optional items -->
