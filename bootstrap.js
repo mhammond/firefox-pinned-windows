@@ -5,199 +5,83 @@ Cu.import("resource:///modules/sessionstore/SessionStore.jsm");
 
 const SS_KEY_PINNED = "pinnedwindow:pinned";
 
-const PREF_VERBOSE = "extensions.pinnedwindow.verbose";
-let verbose = false;
-
-// A weak map with the key being a window and the value being an object
-// with the functions we overrode for that window.
-let windowOverrides = new WeakMap();
-
 function log(what) {
   console.log(" *** pinnedwindow: ", what);
 }
 
-function debug(what) {
-  if (verbose) {
-    console.log(" ***** pinnedwindow: ", what);
-  }
+// Convert chromeWindows <-> windowIds
+// Return the webext windowId for a chrome window.
+function getWindowId(domWindow) {
+  let wu = domWindow.QueryInterface(Ci.nsIDOMWindow)
+                    .QueryInterface(Ci.nsIInterfaceRequestor)
+                    .getInterface(Ci.nsIDOMWindowUtils);
+  return wu.outerWindowID;
 }
 
-// Return a window suitable for "delegating" operations to (eg, the window
-// in which the tab is actually going to be opened in)
-function getNonPinnedWindow() {
-  let enumerator = Services.wm.getEnumerator("navigator:browser");
-  while (enumerator.hasMoreElements()) {
-    let win = enumerator.getNext();
-    if (!windowOverrides.has(win)) {
-      return win;
+// Return a chrome window for a webext windowID
+function getChromeWindow(windowId) {
+  let windowEnum = Services.wm.getEnumerator("navigator:browser");
+  while (windowEnum.hasMoreElements()) {
+    let domWindow = windowEnum.getNext();
+    if (getWindowId(domWindow) == windowId) {
+      return domWindow;
     }
   }
+  return null;
 }
 
-// Open a new window with the specified url. Used when no non-pinned windows
-// can be found.
-function openNewBrowserWindow(url) {
-  // Set up window.arguments.
-  let sa = Cc["@mozilla.org/supports-array;1"].createInstance(Ci.nsISupportsArray);
-  let wuri = null;
-  if (url) {
-    wuri = Cc["@mozilla.org/supports-string;1"].createInstance(Ci.nsISupportsString);
-    wuri.data = url;
+// WebExtension shims
+// webext key is `extension:${extensionId}:${key}`, val is JSON (bug 1322060)
+// (but still not finalized...)
+const WEBEXT_SS_KEY = "extension:pinned-window@mhammond.github.com:pinned";
+
+function isPinned(windowId) {
+  let chromeWindow = getChromeWindow(windowId);
+  if (!chromeWindow) {
+    return false;
   }
-  sa.AppendElement(wuri);
-  // These 2 args apparently need to be specified, even if they are null.
-  sa.AppendElement(null); // charset
-  sa.AppendElement(null); // referrer
-  let features = "chrome,dialog=no,all";
-  let newWindow = Services.ww.openWindow(null, "chrome://browser/content/browser.xul", null, features, sa);
-  newWindow.focus();
-}
 
-// Monkey-patch various browser implementation functions.
-// NOTE: The 'window' variables referenced here are the global window into
-// which these functions are injected.
-let patched_openURI = function (window, aURI, aOpener, aWhere, aContext) {
-  debug("openURI " + (aURI ? aURI.spec : "<null>") + " in " + aWhere);
-  switch (aWhere) {
-    case Ci.nsIBrowserDOMWindow.OPEN_NEWWINDOW:
-      return windowOverrides.get(window).openURI(aURI, aOpener, aWhere, aContext);
-    default :
-      let newWin = getNonPinnedWindow();
-      if (newWin) {
-        newWin.focus();
-        debug("openURI found non-pinned window");
-        return newWin.nsBrowserAccess.prototype.openURI(aURI, aOpener, aWhere, aContext);
-      }
-      debug("openURI can't find a non-pinned window so creating a new window");
-      openNewBrowserWindow(aURI.spec);
-      return null;
-    }
-};
-
-let patched_openURIInFrame = function(window, uri, params, where, context) {
-  debug("openURIInFrame " + (uri ? uri.spec : "<null>") + " in " + where);
-  let win = getNonPinnedWindow();
-  if (win) {
-    win.focus();
-    debug("openURIInFrame found non-pinned window");
-    return win.nsBrowserAccess.prototype.openURIInFrame(uri, params, where, context);
+  // old-school addon set SS_KEY_PINNED - if that exists, migrate now.
+  // XXX - not sure this actually works - it's difficult to test as debugging
+  // involves the old addon being shutdown which removes the old pinned value.
+  // Hopefully the upgrade process doesn't have the same issue.
+  let pinned = SessionStore.getWindowValue(chromeWindow, SS_KEY_PINNED);
+  if (pinned) {
+    SessionStore.setWindowValue(chromeWindow, WEBEXT_SS_KEY, "true");
+    // and delete the old one.
+    SessionStore.deleteWindowValue(chromeWindow, SS_KEY_PINNED);
+    log("migrated window with id " + windowId + " as pinned");
+    return true;
   }
-  // This is very tricky to support the semantics of openURIInFrame into a new
-  // window (ie, we need to wait for it to load before we can delegate it to
-  // the new window, but we need the result synchronously here.)
-  // So just open in this window.
-  debug("openURIInFrame can't find a non-pinned window so opening in original window");
-  return windowOverrides.get(window).openURIInFrame(uri, params, where, context);
+  // doesn't have the old key - look for the new one.
+  pinned = SessionStore.getWindowValue(chromeWindow, WEBEXT_SS_KEY);
+  return !!pinned;
 }
 
-let patched_openLinkIn = function openLinkIn(window, url, where, params) {
-  debug("openLinkIn " + url + " in " + where);// + " with " + JSON.stringify(params));
-  // params.allowPinnedTabHostChange is a param sent when the user enters a
-  // URL into the awesomebar, so we allow that to go to the current window.
-  let useSameWindow = params && params.allowPinnedTabHostChange;
-  if (!useSameWindow && (where == "current" || where == "tab")) {
-    let win = getNonPinnedWindow();
-    if (win) {
-      win.focus();
-      debug("openLinkIn found non-pinned window");
-      return win.openLinkIn(url, where, params);
-    }
+function updateWindowPin(windowId, pinned) {
+  // assume isPinned has migrated!
+  let chromeWindow = getChromeWindow(windowId);
+  if (pinned) {
+    SessionStore.setWindowValue(chromeWindow, WEBEXT_SS_KEY, "true");
+  } else {
+    SessionStore.deleteWindowValue(chromeWindow, WEBEXT_SS_KEY);
   }
-  debug("openLinkIn can't find a non-pinned window so opening in new window");
-  openNewBrowserWindow(url);
-};
-
-// Install the monkey-patches into a window.
-function installPatchesIntoWindow(chromeWindow) {
-  let save = {};
-  save['openURI'] = chromeWindow.nsBrowserAccess.prototype.openURI;
-  chromeWindow.nsBrowserAccess.prototype.openURI = patched_openURI.bind(this, chromeWindow);
-
-  save['openURIInFrame'] = chromeWindow.nsBrowserAccess.prototype.openURIInFrame;
-  chromeWindow.nsBrowserAccess.prototype.openURIInFrame = patched_openURIInFrame.bind(this, chromeWindow);
-
-  save['openLinkIn'] = chromeWindow.openLinkIn;
-  chromeWindow.openLinkIn = patched_openLinkIn.bind(this, chromeWindow);
-
-  windowOverrides.set(chromeWindow, save);
 }
 
-function uninstallPatchesFromWindow(chromeWindow) {
-  let saved = windowOverrides.get(chromeWindow)
-  if (!saved) {
-    return;
-  }
-  chromeWindow.nsBrowserAccess.prototype.openURI = saved['openURI'];
-  chromeWindow.nsBrowserAccess.prototype.openURIInFrame = saved['openURIInFrame'];
-  chromeWindow.openLinkIn = saved['openLinkIn'];
-  windowOverrides.delete(chromeWindow);
-  // remove state from the session store.
-  SessionStore.deleteWindowValue(chromeWindow, SS_KEY_PINNED);
-}
-
-function setPinned(menuItem, chromeWindow) {
-  log("setting window as pinned");
-  installPatchesIntoWindow(chromeWindow);
-  menuItem.setAttribute("label", "Unpin Window");
-
-  // and store the state in the session store.
-  SessionStore.setWindowValue(chromeWindow, SS_KEY_PINNED, "true");
-}
-
-function setUnpinned(menuItem, chromeWindow) {
-  log("setting window as unpinned");
-  uninstallPatchesFromWindow(chromeWindow);
-  menuItem.setAttribute("label", "Pin Window");
-}
-
-// Utilities to initialize the addon...
+// We used to be in the "Tools" menu - to help avoid confusing users, add an
+// entry there pointing at the context menu. This will be removed in the
+// next version!
 function loadIntoWindow(window) {
-  if (!window)
-    return;
-  let wintype = window.document.documentElement.getAttribute('windowtype');
-  if (wintype != "navigator:browser") {
-    log("not installing pinned-window extension into window of type " + wintype);
-    return;
+  if (window.document.getElementById("pinnedwindow-migrate-menuitem")) {
+    return; // menu already exists.
   }
-  // Add persistent UI elements to the "Tools" ment.
   let menuItem = window.document.createElement("menuitem");
-  menuItem.setAttribute("id", "pinnedwindow-menuitem");
-  menuItem.addEventListener("command", function() {
-    let thisWin = this.ownerDocument.defaultView;
-    if (windowOverrides.get(thisWin)) {
-      // already configured, so unconfigure.
-      setUnpinned(this, thisWin);
-    } else {
-      setPinned(this, thisWin);
-    }
-  }, true);
+  menuItem.setAttribute("id", "pinnedwindow-migrate-menuitem");
+  menuItem.setAttribute("label", "(Pin/Unpin Window is now on the context menu!)");
   let menu = window.document.getElementById("menu_ToolsPopup");
-  if (!menu) {
-    // might be a popup or similar.
-    log("not installing pinned-window extension into browser window as there is no Tools menu");
+  if (menu) {
+    menu.appendChild(menuItem);
   }
-  menu.appendChild(menuItem);
-  debug("installing pinnedwindow into new window");
-
-  SessionStore.promiseInitialized.then(
-    () => {
-      log("SessionStore ready");
-      if (SessionStore.getWindowValue(window, SS_KEY_PINNED)) {
-        setPinned(menuItem, window);
-      } else {
-        setUnpinned(menuItem, window);
-      }
-    }
-  );
-}
-
-function unloadFromWindow(window) {
-  if (!window)
-    return;
-  uninstallPatchesFromWindow(window);
-  window.document.getElementById("pinnedwindow-menuitem").remove();
-  // Remove any persistent UI elements
-  // Perform any other cleanup
 }
 
 let windowListener = {
@@ -214,25 +98,11 @@ let windowListener = {
   onWindowTitleChange: function(aWindow, aTitle) {}
 };
 
-function prefObserver(subject, topic, data) {
-  switch (data) {
-    case PREF_VERBOSE:
-      try {
-        verbose = Services.prefs.getBoolPref(PREF_VERBOSE);
-      } catch (ex) {}
-      break;
-  }
-}
 
 /*
  * Extension entry points
  */
-function startup(aData, aReason) {
-  // Watch for prefs we care about.
-  Services.prefs.addObserver(PREF_VERBOSE, prefObserver, false);
-  // And ensure initial values are picked up.
-  prefObserver(null, "", PREF_VERBOSE);
-
+function startup({webExtension}, aReason) {
   // Load into any existing windows
   let windows = Services.wm.getEnumerator("navigator:browser");
   while (windows.hasMoreElements()) {
@@ -242,31 +112,29 @@ function startup(aData, aReason) {
 
   // Load into any new windows
   Services.wm.addListener(windowListener);
+
+  // connect to our embedded web extension.
+  webExtension.startup().then(api => {
+    const {browser} = api;
+    browser.runtime.onMessage.addListener((msg, sender, sendReply) => {
+      try {
+        if (msg.name == "is-window-pinned") {
+          sendReply({pinned: isPinned(msg.windowId)});
+        } else if (msg.name == "update-window-pin") {
+          updateWindowPin(msg.windowId, msg.pinned);
+          sendReply();
+        } else {
+          throw new Error("Unexpected command from extension");
+        }
+      } catch (err) {
+        let failure = `Failed to handle message ${JSON.stringify(msg)} - ${err}\n${err.stack}\n`;
+        log(failure);
+        sendReply({error: failure});
+      }
+    });
+  }).catch(err => log("Failed to init webExtension: " + err));
 }
 
-function shutdown(aData, aReason) {
-  // When the application is shutting down we normally don't have to clean
-  // up any UI changes made
-  if (aReason == APP_SHUTDOWN)
-    return;
-
-  let wm = Cc["@mozilla.org/appshell/window-mediator;1"].getService(Ci.nsIWindowMediator);
-
-  // Stop listening for new windows
-  wm.removeListener(windowListener);
-
-  // Unload from any existing windows
-  let windows = wm.getEnumerator("navigator:browser");
-  while (windows.hasMoreElements()) {
-    let domWindow = windows.getNext().QueryInterface(Ci.nsIDOMWindow);
-    try {
-      unloadFromWindow(domWindow);
-    } catch (ex) {
-      log("Failed to reset window: " + ex + "\n" + ex.stack);
-    }
-  }
-  Services.prefs.removeObserver(PREF_VERBOSE, prefObserver);
-}
-
+function shutdown(aData, aReason) {}
 function install(aData, aReason) {}
 function uninstall(aData, aReason) {}

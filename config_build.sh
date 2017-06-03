@@ -6,6 +6,6 @@ APP_NAME=pinned-windows
 CHROME_PROVIDERS=""
 CLEAN_UP=1
 ROOT_FILES="bootstrap.js README.md"
-ROOT_DIRS=
+ROOT_DIRS="webextension"
 BEFORE_BUILD=
 AFTER_BUILD=

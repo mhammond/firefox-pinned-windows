@@ -10,12 +10,10 @@ with each window dedicated to a particular site or task.
 Note that you can still drag and drop tabs to and from pinned windows - this
 only affects new tabs that would be opened by clicking on a link.
 
-This extension adds a new item to the Tools menu - "Pin Window" or
-"Unpin Window" - which toggles the pinned state for that window.  The pinned
-state is stored with SessionRestore, so the pinned or unpinned state of
-windows remains across browser restarts.
-
-Note that on Windows, you can access the Tools menu with Alt+T.
+This extension adds a new item to the Context menu - "Pin Window" which toggles
+the pinned state for that window.  The pinned state is stored with
+SessionRestore, so the pinned or unpinned state of windows remains across
+browser restarts.
 
 ## Use-cases
 
