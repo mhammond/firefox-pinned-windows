@@ -46,8 +46,12 @@ async function moveToUnpinned(tabId, windowId, url) {
   chrome.tabs.move(tabId, {windowId: targetWindowId, index});
   browser.windows.update(targetWindowId, {focused: true});
   // for reasons I don't understand, tabs opened because of a target=_blank
-  // don't load correctly. I work around this by updating the URL.
-  browser.tabs.update(tabId, {active: true, url});
+  // don't load correctly. I work around this by updating the URL too.
+  let updateInfo = {active: true};
+  if (url) {
+    updateInfo.url = url;
+  }
+  browser.tabs.update(tabId, updateInfo);
 }
 
 // Let addEventListener's be safely async - errors aren't reported otherwise -
@@ -58,12 +62,29 @@ function runasync(asyncFun) {
   }
 }
 
+let lastTabId = undefined;
+
 // This is fired immediately after the tab is created and gives us enough info
 // to decide what we should do with the tab.
+// Sadly though, it is *not* fired when a link is opened by an external app
+// (eg, when you click on a link in your mail client)
 browser.webNavigation.onCreatedNavigationTarget.addListener(runasync(async function(details) {
+  console.log("onCreatedNavigationTarget", JSON.stringify(details));
   if (details.sourceFrameId == 0) {
-    // a top-level tab.
+    lastTabId = details.tabId;
     return moveToUnpinned(details.tabId, details.windowId, details.url);
+  }
+}));
+
+// This is fired soon after a tab is created, but not as soon as onCreatedNavigationTarget.
+// However, it *is* called when a link is opened by an external app.
+// We ignore the event if it is the same tab we last saw in onCreatedNavigationTarget.
+browser.webNavigation.onCommitted.addListener(runasync(async function(details) {
+  console.log("onCommitted", JSON.stringify(details));
+  if (details.frameId == 0 &&
+      details.transitionType == "link" &&
+      details.tabId != lastTabId) {
+    return moveToUnpinned(details.tabId, details.windowId);
   }
 }));
 
